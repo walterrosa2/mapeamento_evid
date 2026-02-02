@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Ambiente virtual
+venv/
+env/
+ENV/
+.venv/
+
+# Diretórios da aplicação (serão criados no container)
+entrada/
+saida/
+logs/
+
+# Arquivos de ambiente
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Arquivos temporários
+*.tmp
+*.log
+*.bak
+
+# Documentação de desenvolvimento
+README.md
+DEPLOY.md
+*.md
+
+# Prompt e arquivos de teste
+Prompt*.txt
+
+# Configuração local do Streamlit (não usar no container)
+.streamlit/
