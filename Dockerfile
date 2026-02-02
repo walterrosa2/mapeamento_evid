@@ -1,6 +1,9 @@
 # Usar imagem Python slim para reduzir tamanho
 FROM python:3.11-slim
 
+# Garantir que logs do Python apareçam imediatamente (sem buffer)
+ENV PYTHONUNBUFFERED=1
+
 # Definir diretório de trabalho
 WORKDIR /app
 

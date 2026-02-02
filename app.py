@@ -11,17 +11,36 @@ from pathlib import Path
 import tempfile
 from loguru import logger
 
+# === DEBUG: RASTREAMENTO DE INICIALIZAÇÃO ===
+print("--- [DEBUG] INICIANDO APP.PY ---", flush=True)
+
 # Configurar logger
 logger.remove()
 logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
 
-# Importar módulos da aplicação
-from src.controlador import processar_todos_os_blocos
-from src.leitor_txt import carregar_blocos
-from src.gemini_api import enviar_bloco_para_gemini
-from src.planilha import inicializar_planilha, adicionar_linha_excel
-from src.controlador import extrair_campos, limpar_linha_vazia
-from config import CAMINHO_ENTRADA, CAMINHO_SAIDA, ARQUIVO_PADRAO_TXT
+# Importar módulos da aplicação com tratamento de erro
+try:
+    print("--- [DEBUG] IMPORTANDO CONTROLADOR ---", flush=True)
+    from src.controlador import processar_todos_os_blocos
+    from src.controlador import extrair_campos, limpar_linha_vazia
+    
+    print("--- [DEBUG] IMPORTANDO LEITOR_TXT ---", flush=True)
+    from src.leitor_txt import carregar_blocos
+    
+    print("--- [DEBUG] IMPORTANDO GEMINI_API ---", flush=True)
+    from src.gemini_api import enviar_bloco_para_gemini
+    
+    print("--- [DEBUG] IMPORTANDO PLANILHA ---", flush=True)
+    from src.planilha import inicializar_planilha, adicionar_linha_excel
+    
+    print("--- [DEBUG] IMPORTANDO CONFIG ---", flush=True)
+    from config import CAMINHO_ENTRADA, CAMINHO_SAIDA, ARQUIVO_PADRAO_TXT
+    
+    print("--- [DEBUG] IMPORTS CONCLUIDOS COM SUCESSO ---", flush=True)
+except Exception as e:
+    print(f"--- [CRITICAL ERROR] FALHA NA IMPORTAÇÃO: {e} ---", flush=True)
+    logger.exception("Falha crítica na importação de módulos")
+    sys.exit(1)
 
 # Configuração da página
 st.set_page_config(
