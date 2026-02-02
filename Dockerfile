@@ -22,11 +22,12 @@ COPY . .
 # Criar diretórios necessários
 RUN mkdir -p entrada saida logs
 
-# Expor porta do Streamlit
-EXPOSE 8501
+# Expor porta (Railway injeta dinamicamente, mantemos 8501 como fallback)
+ENV PORT=8501
+EXPOSE ${PORT}
 
 # Configurar Streamlit para produção
-ENV STREAMLIT_SERVER_PORT=8501
+ENV STREAMLIT_SERVER_PORT=${PORT}
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
@@ -34,8 +35,9 @@ ENV STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
 ENV STREAMLIT_SERVER_ENABLE_CORS=false
 ENV STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
 
-# Healthcheck
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+# Healthcheck robusto usando a porta dinâmica
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl --fail http://localhost:${PORT}/_stcore/health || exit 1
 
-# Comando para iniciar a aplicação
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Comando para iniciar a aplicação (Streamlit lê STREAMLIT_SERVER_PORT)
+CMD ["streamlit", "run", "app.py"]
