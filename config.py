@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente do arquivo .env (se existir)
-load_dotenv()
+load_dotenv(override=True)
 
 # === RAIZ ABSOLUTA DO PROJETO ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

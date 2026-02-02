@@ -1,7 +1,6 @@
-# controlador.py (versão corrigida 2025-10-30)
-
 import re
 import json
+from loguru import logger
 from src.leitor_txt import carregar_blocos
 from src.gemini_api import enviar_bloco_para_gemini
 from src.planilha import inicializar_planilha, adicionar_linha_excel
@@ -61,7 +60,9 @@ def parse_markdown_tabela(texto: str) -> list:
     for i, linha in enumerate(linhas):
         # Detecta linha divisória (--- ou :---)
         if re.match(r"^\|?[\-\:\s\|]+$", linha):
-            cabecalho = [c.strip(" :") for c in re.split(r"\s*\|\s*", linhas[i - 1]) if c.strip()]
+            # Tenta pegar o cabeçalho na linha anterior
+            if i > 0:
+                cabecalho = [c.strip(" :") for c in re.split(r"\s*\|\s*", linhas[i - 1]) if c.strip()]
             continue
 
         # Processa linhas de dados
@@ -92,7 +93,9 @@ def extrair_campos(texto: str) -> list:
 
     # Tentativa 1 — JSON
     try:
-        data = json.loads(texto)
+        # Remover blocos de código markdown se presentes
+        json_clean = re.sub(r"```json\s*|\s*```", "", texto).strip()
+        data = json.loads(json_clean)
         if isinstance(data, list):
             return normalizar_chaves(data)
     except json.JSONDecodeError:
@@ -126,24 +129,24 @@ def processar_todos_os_blocos():
     2) Envia cada bloco à Gemini
     3) Extrai e grava evidências normalizadas no Excel
     """
-    print("📚 Carregando blocos do arquivo TXT...")
+    logger.info("📚 Carregando blocos do arquivo TXT...")
     blocos = carregar_blocos(ARQUIVO_PADRAO_TXT)
     total_blocos = len(blocos)
 
-    print("📄 Inicializando planilha...")
+    logger.info("📄 Inicializando planilha...")
     inicializar_planilha()
 
     for i, bloco in enumerate(blocos):
-        print(f"\n🚀 Processando bloco {i+1}/{total_blocos}...")
+        logger.info(f"🚀 Processando bloco {i+1}/{total_blocos}...")
 
         resposta = enviar_bloco_para_gemini(bloco, bloco_id=i)
         if not resposta:
-            print("❌ Erro: nenhum retorno recebido da Gemini.")
+            logger.error(f"Erro: nenhum retorno recebido da Gemini para o bloco {i}.")
             continue
 
         evidencias = extrair_campos(resposta)
         if not evidencias:
-            print("⚠️ Nenhum dado extraído. Verifique o retorno do bloco.")
+            logger.warning(f"Nenhum dado extraído do bloco {i}. Verifique o retorno.")
             continue
 
         linhas_validas = 0
@@ -153,6 +156,6 @@ def processar_todos_os_blocos():
                 adicionar_linha_excel(evidencia_limpa)
                 linhas_validas += 1
 
-        print(f"✅ {linhas_validas} evidência(s) válidas salva(s) na planilha.")
+        logger.success(f"✅ {linhas_validas} evidência(s) válidas salva(s) na planilha.")
 
-    print("\n🏁 Processamento finalizado com sucesso.")
+    logger.info("🏁 Processamento finalizado com sucesso.")
