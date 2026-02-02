@@ -1,6 +1,6 @@
-# 🚀 Guia de Deploy - Catalogador Pericial
+# 🚀 Guia de Deploy - Mapeamento Pericial
 
-Este guia fornece instruções passo a passo para fazer deploy da aplicação **Catalogador Pericial** no Railway usando Docker Desktop.
+Este guia fornece instruções passo a passo para fazer deploy da aplicação **Mapeamento Pericial** no Railway usando Docker Desktop.
 
 ## 📋 Pré-requisitos
 
@@ -72,7 +72,7 @@ Se tudo funcionar, pressione `Ctrl+C` no PowerShell para parar o container.
 cd "c:/Users/walte/OneDrive/Workspace/IA/Cruvinel/Valuation/Projetos/Agente Mapeamento/P2"
 git init
 git add .
-git commit -m "Initial commit - Catalogador Pericial"
+git commit -m "Initial commit - Mapeamento Pericial"
 ```
 
 3. Conecte ao repositório remoto:
@@ -103,7 +103,7 @@ git push -u origin main
 
 1. Vá em **"Settings"**
 2. Em **"Networking"**, clique em **"Generate Domain"**
-3. Copie a URL gerada (ex: `catalogador-pericial-production.up.railway.app`)
+3. Copie a URL gerada (ex: `mapeamento-pericial-production.up.railway.app`)
 
 #### 2.5 Deploy
 
@@ -145,7 +145,7 @@ Siga os passos 2.3 a 2.5 da Opção A.
 ### 3.1 Verificar Deploy
 
 1. Acesse a URL gerada pelo Railway
-2. Você deve ver a interface do Catalogador Pericial
+2. Você deve ver a interface do Mapeamento Pericial
 3. Verifique se não há erros no console do navegador
 
 ### 3.2 Testar Funcionalidade
@@ -171,7 +171,7 @@ No Railway, vá em **"Deployments" → "View Logs"** para acompanhar:
 **Solução**: Verifique se todas as dependências estão no `requirements.txt`
 
 ```powershell
-docker build --no-cache -t catalogador-pericial:latest .
+docker build --no-cache -t mapeamento-pericial:latest .
 ```
 
 ### Problema: "API Key inválida"

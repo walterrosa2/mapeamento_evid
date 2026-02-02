@@ -1,4 +1,4 @@
-# Catalogador Pericial ⚖️
+# Mapeamento Pericial ⚖️
 
 Aplicação de extração automatizada de evidências jurídicas usando IA (Google Gemini).
 

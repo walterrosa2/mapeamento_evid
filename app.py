@@ -1,5 +1,5 @@
 """
-Catalogador Pericial - Interface Streamlit
+Mapeamento Pericial - Interface Streamlit
 Aplicação para extração automatizada de evidências jurídicas
 """
 
@@ -44,7 +44,7 @@ except Exception as e:
 
 # Configuração da página
 st.set_page_config(
-    page_title="Catalogador Pericial",
+    page_title="Mapeamento Pericial",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -105,14 +105,14 @@ def processar_arquivo_upload(uploaded_file):
 
 def main():
     # Header
-    st.markdown('<div class="main-header">⚖️ Catalogador Pericial</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">⚖️ Mapeamento Pericial</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Extração Automatizada de Evidências Jurídicas</div>', unsafe_allow_html=True)
     
     # Sidebar com informações
     with st.sidebar:
         st.header("ℹ️ Sobre")
         st.markdown("""
-        Esta aplicação utiliza IA para extrair e catalogar evidências de processos jurídicos.
+        Esta aplicação utiliza IA para extrair e mapear evidências de processos jurídicos.
         
         **Como usar:**
         1. Faça upload do arquivo TXT (extraído via OCR)
