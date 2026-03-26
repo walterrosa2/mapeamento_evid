@@ -14,10 +14,11 @@ env/
 ENV/
 .venv/
 
-# Diretórios da aplicação (serão criados no container)
+# Diretórios de Estado (Persistência via Volumes no Compose)
 entrada/
 saida/
 logs/
+data/
 
 # Arquivos de ambiente
 .env
@@ -38,18 +39,19 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Arquivos temporários
+# Arquivos temporários e Logs
 *.tmp
 *.log
 *.bak
 
-# Documentação de desenvolvimento
+# Documentação e Assets de desenvolvimento
 README.md
 DEPLOY.md
 *.md
-
-# Prompt e arquivos de teste
 Prompt*.txt
 
-# Configuração local do Streamlit (não usar no container)
+# Configuração local do Streamlit
 .streamlit/
+
+# Precedência: Manter requirements.txt para o build
+!requirements.txt

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  mapeamento-pericial:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mapeamento_pericial_app
+    restart: unless-stopped
+    ports:
+      - "8515:8515"
+    env_file:
+      - .env
+    environment:
+      - STREAMLIT_SERVER_PORT=8515
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    volumes:
+      - ./entrada:/app/entrada
+      - ./saida:/app/saida
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 1G # Limite preventivo para o servidor Ubuntu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8515/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Opcional: se houver necessidade de uma API separada (ex: FastAPI) rodando na mesma imagem,
+# bastaria adicionar outro serviço aqui usando o mesmo build e alterando o 'command'.
+# Exemplo:
+# api:
+#   build: .
+#   command: uvicorn main:app --host 0.0.0.0 --port 8000
+#   ports:
+#     - "8000:8000"
