@@ -11,7 +11,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # === CHAVE DA API GEMINI ===
 # Prioriza variável de ambiente, com fallback para chave local (desenvolvimento)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyBnB53v9E0fVo-DOfxqRe14-I_SzTeyGDg")
+_CHAVE_FALLBACK = "AIzaSyBnB53v9E0fVo-DOfxqRe14-I_SzTeyGDg"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", _CHAVE_FALLBACK)
+
+from loguru import logger
+if GOOGLE_API_KEY == _CHAVE_FALLBACK:
+    logger.warning("⚠️ Usando API Key de FALLBACK (Memória). Verifique seu .env!")
+else:
+    # Mostra apenas o final para auditoria sem vazar a chave
+    logger.success(f"🔑 API Key carregada com sucesso do .env (Final: ...{GOOGLE_API_KEY[-4:]})")
 
 # === TAMANHO DO BLOCO EM CARACTERES (ajuste se necessário) ===
 TAMANHO_BLOCO = 80000  # Aproximadamente 10k caracteres por bloco
