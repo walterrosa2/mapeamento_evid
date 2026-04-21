@@ -1,13 +1,18 @@
 import os
 import time
 from loguru import logger
-from google import genai
+
+# Importação robusta para evitar conflito de namespace 'google'
+try:
+    from google import genai
+except ImportError:
+    import google.genai as genai
+
 from google.genai import types
 from config import GOOGLE_API_KEY, PROMPT_PADRAO, CAMINHO_LOGS
 
-# Inicializar cliente Gemini (Nova SDK google-genai)
+# Inicializar cliente Gemini
 client = genai.Client(api_key=GOOGLE_API_KEY)
-# Usando a versão recomendada atual (Abril 2026)
 MODEL_ID = "gemini-2.5-flash"
 
 def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
@@ -15,13 +20,11 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
     Envia um único bloco de texto para a API Gemini com Retentativa Exponencial.
     """
     max_retries = 5
-    retry_delay = 3  # Começa com 3 segundos
+    retry_delay = 3
 
     for attempt in range(max_retries):
         try:
             prompt_final = PROMPT_PADRAO + "\n\n" + texto_bloco
-            
-            # Auditoria: Salvar o que foi enviado
             salvar_bloco_enviado(bloco_id, prompt_final)
 
             logger.info(f"🚀 Enviando bloco {bloco_id} (Tentativa {attempt + 1}/{max_retries} - Modelo: {MODEL_ID})...")
@@ -36,15 +39,12 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
                 return ""
 
             resposta_texto = response.text.strip()
-
-            # Auditoria: Salvar resposta bruta
             salvar_resposta_em_log(bloco_id, resposta_texto)
 
             return resposta_texto
 
         except Exception as e:
             error_msg = str(e).lower()
-            # Verifica se é erro de cota (429) ou sobrecarga (503/500)
             if "429" in error_msg or "exhausted" in error_msg or "too many requests" in error_msg:
                 if attempt < max_retries - 1:
                     wait_time = retry_delay * (2 ** attempt)
@@ -52,7 +52,7 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.error(f"❌ Falha definitiva no bloco {bloco_id} após {max_retries} tentativas (Cota Esgotada).")
+                    logger.error(f"❌ Falha definitiva no bloco {bloco_id} após {max_retries} tentativas.")
             else:
                 logger.error(f"❌ Erro na API Gemini (Bloco {bloco_id}): {e}")
                 break
@@ -60,14 +60,12 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
     return ""
 
 def salvar_resposta_em_log(bloco_id: int, conteudo: str):
-    """Salva o retorno da LLM para auditoria."""
     os.makedirs(CAMINHO_LOGS, exist_ok=True)
     nome_arquivo = os.path.join(CAMINHO_LOGS, f"resposta_bloco_{bloco_id:03}.txt")
     with open(nome_arquivo, "w", encoding="utf-8") as f:
         f.write(conteudo)
 
 def salvar_bloco_enviado(bloco_id: int, texto_bloco: str):
-    """Salva localmente o conteúdo enviado para rastreamento."""
     os.makedirs(CAMINHO_LOGS, exist_ok=True)
     caminho = os.path.join(CAMINHO_LOGS, f"bloco_enviado_{bloco_id:03}.txt")
     with open(caminho, "w", encoding="utf-8") as f:
