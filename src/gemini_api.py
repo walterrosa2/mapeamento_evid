@@ -9,7 +9,7 @@ except ImportError:
     import google.genai as genai
 
 from google.genai import types
-from config import GOOGLE_API_KEY, PROMPT_PADRAO, PROMPT_RESUMIDOR, CAMINHO_LOGS, MAX_CHARS_RESUMIDOR
+from config import GOOGLE_API_KEY, PROMPT_PADRAO, PROMPT_RESUMIDOR, CAMINHO_LOGS, MAX_CHARS_RESUMIDOR, MAX_TOKENS_RESUMO
 
 # Inicializar cliente Gemini
 client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -117,14 +117,23 @@ def gerar_resumo_processo(texto_completo: str) -> str:
                 model=MODEL_ID,
                 contents=PROMPT_RESUMIDOR + "\n\n" + texto_completo,
                 config=types.GenerateContentConfig(
-                    max_output_tokens=2048,
+                    max_output_tokens=MAX_TOKENS_RESUMO,
+                    # Desabilita "thinking" para não consumir o orçamento de saída
+                    # (causa do resumo truncado em gemini-2.5-flash).
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
 
             duracao = time.time() - inicio
 
+            # Diagnóstico de truncamento (finish_reason != STOP indica corte)
+            candidate = response.candidates[0] if response.candidates else None
+            finish_reason = candidate.finish_reason if candidate else "UNKNOWN"
+            if str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
+                logger.warning(f"⚠️ Resumo encerrado com finish_reason={finish_reason} — pode estar incompleto.")
+
             if not response.text:
-                logger.warning(f"⚠️ Resumo vazio")
+                logger.warning("⚠️ Resumo vazio")
                 return ""
 
             resumo = response.text.strip()

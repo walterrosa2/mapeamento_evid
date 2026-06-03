@@ -3,7 +3,14 @@
 import os
 import re
 from loguru import logger
-from config import CAMINHO_ENTRADA, ARQUIVO_PADRAO_TXT, TAMANHO_BLOCO, PAGINAS_POR_BLOCO
+from config import (
+    CAMINHO_ENTRADA,
+    ARQUIVO_PADRAO_TXT,
+    TAMANHO_BLOCO,
+    PAGINAS_POR_BLOCO,
+    DELIMITADOR_PAGINA_PADRAO,
+    MAX_CHARS_BLOCO,
+)
 
 def ler_arquivo_txt(nome_arquivo=ARQUIVO_PADRAO_TXT):
     """Lê o conteúdo de um arquivo .txt na pasta de entrada."""
@@ -46,65 +53,67 @@ def carregar_texto_completo(nome_arquivo=ARQUIVO_PADRAO_TXT) -> str:
     """T04: Lê o texto bruto sem chunking (para Agente 1 — resumidor)."""
     return ler_arquivo_txt(nome_arquivo)
 
-def detectar_paginas(texto: str) -> list:
-    """T05: Split por [fls. N] com regex; retorna list[(num_pagina, texto_pagina)]."""
+def detectar_paginas(texto: str, delimitador: str = DELIMITADOR_PAGINA_PADRAO) -> list:
+    """v3.2: Divide o texto pelo delimitador de página configurável.
+
+    Retorna list[(num_pagina, texto_pagina)]. Se o delimitador não existir no
+    texto, retorna [] — sinalizando ao chamador para usar o fallback por caracteres.
+    """
+    if not delimitador or delimitador not in texto:
+        return []
+
+    partes = texto.split(delimitador)
     paginas = []
-    # Split mantém os delimitadores
-    partes = re.split(r'(\[fls\.\s*\d+\])', texto)
-
-    current_num = None
-    current_texto = []
-
-    for i, parte in enumerate(partes):
-        if re.match(r'\[fls\.\s*(\d+)\]', parte):
-            # Extrair número da página
-            match = re.match(r'\[fls\.\s*(\d+)\]', parte)
-            if match:
-                if current_texto and current_num is not None:
-                    paginas.append((current_num, " ".join(current_texto)))
-                current_num = int(match.group(1))
-                current_texto = [parte]
-        elif parte.strip():
-            if current_num is None:
-                current_num = 0
-            current_texto.append(parte)
-
-    if current_texto and current_num is not None:
-        paginas.append((current_num, " ".join(current_texto)))
+    for parte in partes:
+        if not parte.strip():
+            continue
+        # Quando o delimitador é seguido do número da página (ex: "---Página--- 12"),
+        # extrai esse número; caso contrário, usa a posição sequencial.
+        match = re.match(r'\s*(\d+)', parte)
+        num = int(match.group(1)) if match else len(paginas) + 1
+        paginas.append((num, parte))
 
     return paginas
 
-def dividir_por_paginas(texto: str, paginas_por_bloco: int = PAGINAS_POR_BLOCO) -> list:
-    """T06: Agrupa N páginas por bloco, aplica limpeza dentro de cada bloco."""
-    paginas = detectar_paginas(texto)
-
+def dividir_por_paginas(texto: str, delimitador: str = DELIMITADOR_PAGINA_PADRAO,
+                        paginas_por_bloco: int = PAGINAS_POR_BLOCO) -> list:
+    """v3.2: Agrupa N páginas por bloco; subdivide se exceder MAX_CHARS_BLOCO."""
+    paginas = detectar_paginas(texto, delimitador)
     if not paginas:
         return []
 
     blocos = []
     for i in range(0, len(paginas), paginas_por_bloco):
         chunk_paginas = paginas[i:i+paginas_por_bloco]
-        texto_bloco = " ".join([p[1] for p in chunk_paginas])
+        texto_bloco = " ".join(p[1] for p in chunk_paginas)
         limpo = limpar_texto(texto_bloco)
-        if limpo:
+        if not limpo:
+            continue
+        # Teto de segurança: evita blocos gigantes (e respostas truncadas)
+        if len(limpo) > MAX_CHARS_BLOCO:
+            blocos.extend(dividir_em_blocos(limpo, tamanho=MAX_CHARS_BLOCO))
+        else:
             blocos.append(limpo)
 
     return blocos
 
-def carregar_blocos(nome_arquivo=ARQUIVO_PADRAO_TXT):
-    """T07–T09: Fluxo completo v3.0 — tenta page-aware, fallback char-based."""
+def carregar_blocos(nome_arquivo=ARQUIVO_PADRAO_TXT, delimitador: str = DELIMITADOR_PAGINA_PADRAO):
+    """v3.2: Tenta dividir por páginas (delimitador configurável); fallback char-based."""
     bruto = ler_arquivo_txt(nome_arquivo)
 
-    paginas = detectar_paginas(bruto)
+    paginas = detectar_paginas(bruto, delimitador)
 
-    if paginas and len(paginas) > 0:
-        # Sucesso: chunking por páginas
-        blocos = dividir_por_paginas(bruto)
-        logger.info(f"✅ Documento: {len(paginas)} páginas detectadas → {len(blocos)} blocos de {PAGINAS_POR_BLOCO} páginas")
+    if paginas:
+        blocos = dividir_por_paginas(bruto, delimitador)
+        logger.info(
+            f"✅ Documento: {len(paginas)} páginas detectadas (delim='{delimitador}') "
+            f"→ {len(blocos)} blocos (até {PAGINAS_POR_BLOCO} págs/bloco, teto {MAX_CHARS_BLOCO} chars)"
+        )
         return blocos
     else:
-        # Fallback: chunking por caracteres
-        logger.warning(f"⚠️ Nenhum marcador [fls.] detectado — usando chunking por caracteres")
+        logger.warning(
+            f"⚠️ Delimitador '{delimitador}' não encontrado — usando chunking por caracteres"
+        )
         limpo = limpar_texto(bruto)
         blocos = dividir_em_blocos(limpo)
         logger.info(f"✅ Documento dividido em {len(blocos)} blocos de ~{TAMANHO_BLOCO} caracteres")

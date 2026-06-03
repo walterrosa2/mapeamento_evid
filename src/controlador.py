@@ -4,7 +4,7 @@ from typing import Callable, Optional
 from loguru import logger
 from src.leitor_txt import carregar_blocos, carregar_texto_completo
 from src.gemini_api import enviar_bloco_para_gemini, gerar_resumo_processo
-from src.planilha import inicializar_planilha, adicionar_linhas_excel
+from src.planilha import inicializar_planilha, adicionar_linhas_excel, escrever_resumo_primeira_aba
 from src import persistence
 from config import ARQUIVO_PADRAO_TXT
 
@@ -74,16 +74,63 @@ def parse_markdown_tabela(texto: str) -> list:
 # Extração híbrida JSON + Markdown
 # ---------------------------------------------------------------------------
 
+def _recuperar_objetos_json(trecho: str) -> list:
+    """Extrai objetos {...} completos de um JSON possivelmente truncado.
+
+    Tolera respostas cortadas pelo limite de tokens: percorre o texto e fecha
+    cada objeto de nível superior, ignorando chaves dentro de strings.
+    """
+    objetos = []
+    nivel = 0
+    inicio = None
+    em_string = False
+    escape = False
+    for i, ch in enumerate(trecho):
+        if em_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                em_string = False
+            continue
+        if ch == '"':
+            em_string = True
+        elif ch == "{":
+            if nivel == 0:
+                inicio = i
+            nivel += 1
+        elif ch == "}":
+            if nivel > 0:
+                nivel -= 1
+                if nivel == 0 and inicio is not None:
+                    try:
+                        objetos.append(json.loads(trecho[inicio:i + 1]))
+                    except json.JSONDecodeError:
+                        pass
+                    inicio = None
+    return objetos
+
+
 def extrair_campos(texto: str) -> list:
     texto = texto.strip()
+
+    # 1) JSON (formato primário v3.2): remove cercas e isola o array
+    json_clean = re.sub(r"```json\s*|\s*```", "", texto).strip()
+    ini, fim = json_clean.find("["), json_clean.rfind("]")
+    candidato = json_clean[ini:fim + 1] if ini != -1 and fim > ini else json_clean
     try:
-        json_clean = re.sub(r"```json\s*|\s*```", "", texto).strip()
-        data = json.loads(json_clean)
-        if isinstance(data, list):
+        data = json.loads(candidato)
+        if isinstance(data, list) and data:
             return normalizar_chaves(data)
     except json.JSONDecodeError:
-        pass
+        # 2) JSON truncado/inválido: recupera objetos completos
+        objetos = _recuperar_objetos_json(json_clean)
+        if objetos:
+            logger.warning(f"JSON inválido/truncado — recuperados {len(objetos)} objeto(s) parciais.")
+            return normalizar_chaves(objetos)
 
+    # 3) Fallback: tabela Markdown (compatibilidade)
     dados_md = parse_markdown_tabela(texto)
     if dados_md:
         return normalizar_chaves(dados_md)
@@ -118,7 +165,8 @@ def processar_blocos_run(
       status_bloco: 'ok' | 'vazio' | 'erro' | 'resumindo'
       bloco_id=-1 sinaliza Fase 1 (resumindo)
 
-    Retorna total de evidências extraídas.
+    Retorna tupla (total_evidencias_extraidas, resumo_processo).
+    resumo_processo é "" quando SAC não foi usado ou falhou.
     """
     skip_ids = skip_ids or set()
     total_blocos = len(blocos)
@@ -133,7 +181,9 @@ def processar_blocos_run(
         if progress_cb:
             progress_cb(-1, total_blocos, 0, "resumindo")
         contexto_global = gerar_resumo_processo(texto_completo)
-        if not contexto_global:
+        if contexto_global:
+            persistence.salvar_resumo_run(run_id, contexto_global)
+        else:
             logger.warning("⚠️ SAC desativado — falha ao gerar resumo")
 
     for i, bloco in enumerate(blocos):
@@ -178,7 +228,12 @@ def processar_blocos_run(
         if progress_cb:
             progress_cb(i, total_blocos, evidencias_acumuladas, "ok")
 
-    return evidencias_acumuladas
+    # Grava o resumo como primeira aba do Excel APÓS todas as evidências
+    # (adicionar_linhas_excel reescreve o arquivo e apagaria abas extras).
+    if contexto_global:
+        escrever_resumo_primeira_aba(run_id, contexto_global)
+
+    return evidencias_acumuladas, contexto_global
 
 
 # ---------------------------------------------------------------------------

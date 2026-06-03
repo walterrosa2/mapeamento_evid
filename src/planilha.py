@@ -93,6 +93,18 @@ def adicionar_linha_excel(dados_linha: dict, run_id: str, arquivo_origem: str = 
     adicionar_linhas_excel([dados_linha], run_id, arquivo_origem)
 
 
+def ler_evidencias_df(caminho: str) -> pd.DataFrame:
+    """Lê a aba de evidências de forma resiliente.
+
+    Como a aba 'Resumo' pode estar na primeira posição, seleciona a primeira aba
+    que NÃO seja o resumo. Compatível com Excels antigos (aba única 'Sheet1').
+    """
+    xls = pd.ExcelFile(caminho)
+    abas = [s for s in xls.sheet_names if s != NOME_ABA_RESUMO]
+    aba = abas[0] if abas else xls.sheet_names[0]
+    return pd.read_excel(xls, sheet_name=aba)
+
+
 # ---------------------------------------------------------------------------
 # Retrocompatibilidade (legado — main.py CLI)
 # ---------------------------------------------------------------------------
@@ -120,11 +132,65 @@ def adicionar_linha_excel_legado(dados_linha: dict):
     df_atualizado.to_excel(caminho, index=False)
 
 
-def salvar_resumo_final(resumo_texto: str, run_id: str = None):
-    """Salva aba 'Resumo Final' no Excel da run (ou legado)."""
-    caminho = get_caminho_excel(run_id) if run_id else os.path.join(CAMINHO_SAIDA, "evidencias_extraidas.xlsx")
+NOME_ABA_RESUMO = "Resumo"
+
+
+def _parsear_resumo(resumo: str) -> list[tuple[str, str]]:
+    """Converte o texto do resumo em pares (Campo, Valor) para a planilha.
+
+    Linhas no formato 'CHAVE: valor' viram duas colunas; demais linhas
+    não-vazias vão inteiras para a coluna de valor (Campo vazio).
+    """
+    linhas: list[tuple[str, str]] = []
+    for linha in resumo.splitlines():
+        texto = linha.rstrip()
+        if not texto.strip():
+            continue
+        if ":" in texto:
+            campo, valor = texto.split(":", 1)
+            linhas.append((campo.strip(), valor.strip()))
+        else:
+            linhas.append(("", texto.strip()))
+    return linhas
+
+
+def escrever_resumo_primeira_aba(run_id: str, resumo: str) -> None:
+    """Grava o resumo do processo (SAC) como PRIMEIRA aba ('Resumo') do Excel da run.
+
+    Deve ser chamada APÓS todas as escritas de evidências, pois
+    `adicionar_linhas_excel` reescreve o arquivo inteiro e apagaria abas extras.
+    Best-effort: qualquer falha apenas gera warning e não derruba o pipeline.
+    """
+    if not resumo or not resumo.strip():
+        return
+
+    caminho = get_caminho_excel(run_id)
     if not os.path.exists(caminho):
         return
-    with pd.ExcelWriter(caminho, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_resumo = pd.DataFrame({"Resumo": [resumo_texto]})
-        df_resumo.to_excel(writer, sheet_name="Resumo Final", index=False)
+
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.styles import Alignment, Font
+
+        wb = load_workbook(caminho)
+        if NOME_ABA_RESUMO in wb.sheetnames:
+            del wb[NOME_ABA_RESUMO]
+
+        ws = wb.create_sheet(NOME_ABA_RESUMO, 0)
+        ws.append(["Campo", "Valor"])
+        ws["A1"].font = Font(bold=True)
+        ws["B1"].font = Font(bold=True)
+
+        for campo, valor in _parsear_resumo(resumo):
+            ws.append([campo, valor])
+
+        ws.column_dimensions["A"].width = 32
+        ws.column_dimensions["B"].width = 90
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+        wb.save(caminho)
+    except Exception as exc:
+        from loguru import logger
+        logger.warning(f"Falha ao escrever aba '{NOME_ABA_RESUMO}' (best-effort): {exc}")

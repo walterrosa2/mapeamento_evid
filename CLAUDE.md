@@ -19,29 +19,35 @@ src/
   mailer.py         — Email best-effort (smtplib)
 scripts/
   reenviar_blocos_erro.py  — Diagnóstico: reenvio isolado de blocos com erro
+  testar_smtp.py           — Diagnóstico: teste isolado de envio de email (SMTP)
 ```
 
 <!-- SPECKIT START -->
-## Plano Ativo: v3.0 — Chunking Inteligente e Contexto Global
+## Plano Ativo: v3.2 — Correções de chunking, parsing e resumo
 
 ### Objetivo
-Melhorar a qualidade da extração de evidências com dois mecanismos ortogonais:
-1. **Page-Aware Chunking**: dividir por `[fls. N]` em vez de caracteres
-2. **SAC (Summary-Augmented Chunking)**: pipeline de 2 agentes onde o Agente 1
-   gera um resumo do processo completo e o Agente 2 usa esse resumo como contexto
-   em cada bloco de extração
+Corrigir três bugs da execução real e enriquecer o resumo para a esteira pericial:
+1. **Chunking**: delimitador de página **configurável** na UI (default `---Página---`) + teto de
+   tamanho por bloco + fallback char-based (corrige o "1 bloco gigante de 837K chars")
+2. **Resumo**: `thinking_budget=0` + `max_output_tokens=8192` (corrige truncamento em 256 chars);
+   prompt expandido com **DOCUMENTOS-CHAVE** e **QUESITOS PERICIAIS**
+3. **Extração**: saída em **JSON** + parser robusto (corrige `ERRO_PARSE` com tabela Markdown malformada)
 
 ### Arquivos afetados
 | Arquivo | Mudança |
 |---|---|
-| `config.py` | + `PAGINAS_POR_BLOCO`, `PROMPT_RESUMIDOR`, `MAX_CHARS_RESUMIDOR` |
-| `leitor_txt.py` | + `carregar_texto_completo()`, `detectar_paginas()`, `dividir_por_paginas()` |
-| `gemini_api.py` | + `gerar_resumo_processo()`, param `contexto_global` em `enviar_bloco_para_gemini()` |
-| `controlador.py` | + params `texto_completo`, `usar_sac` em `processar_blocos_run()` |
-| `app.py` | + checkbox SAC, progresso 2 fases, ETA só na Fase 2 |
+| `config.py` | + `DELIMITADOR_PAGINA_PADRAO`, `MAX_CHARS_BLOCO`, `MAX_TOKENS_RESUMO`; `PROMPT_PADRAO`→JSON; `PROMPT_RESUMIDOR` expandido |
+| `leitor_txt.py` | chunking por delimitador literal + teto `MAX_CHARS_BLOCO` + fallback |
+| `gemini_api.py` | resumidor: mais tokens + `thinking_budget=0` + log `finish_reason` |
+| `controlador.py` | `extrair_campos` JSON-first + `_recuperar_objetos_json` + fallback Markdown |
+| `app.py` | campo "Delimitador de página" repassado a `carregar_blocos` |
+| `tests/` | + `test_leitor_paginas.py`, `test_parser_json.py` |
 
-### Ordem de implementação
-`config.py` → `leitor_txt.py` → `gemini_api.py` → `controlador.py` → `app.py`
+### Validação (API real)
+327 págs → 34 blocos · resumo 9.107 chars (25 docs + 22 quesitos) · bloco 0 → 37 evidências JSON · pytest 20/20
+
+### Histórico
+- v3.1 (Resumo visível + email), v3.0 (SAC), v2.x: ver `.specify/archive/`
 
 ### Spec/Plan/Tasks
 - `.specify/memory/specify.md`

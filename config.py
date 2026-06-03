@@ -27,6 +27,15 @@ TAMANHO_BLOCO = 30000  # ~7.5k tokens de documento — deixa margem suficiente p
 # === PAGE-AWARE CHUNKING v3.0 ===
 PAGINAS_POR_BLOCO = 10  # Agrupar N páginas por bloco; ajuste para adaptar tamanho
 
+# === DELIMITADOR DE PÁGINA (v3.2) ===
+# Marcador que separa as páginas no TXT OCR. Cada processo pode ter o seu;
+# este é apenas o valor inicial sugerido na UI.
+DELIMITADOR_PAGINA_PADRAO = "---Página---"
+
+# Teto de segurança: se um grupo de páginas exceder este tamanho, é subdividido
+# por caracteres para evitar blocos gigantes (e respostas truncadas do modelo).
+MAX_CHARS_BLOCO = 45000
+
 # === CAMINHOS PADRÃO USANDO BASE ABSOLUTA ===
 CAMINHO_ENTRADA = os.path.join(BASE_DIR, "entrada")
 CAMINHO_SAIDA = os.path.join(BASE_DIR, "saida")
@@ -78,15 +87,23 @@ Identifique o trecho [fls.] e a numeração na sequência corresponde a numeraç
 
 Formato de Resposta (OBRIGATÓRIO):
 IMPORTANTE:
-- Responda **exclusivamente** em formato de tabela Markdown, conforme o exemplo.
-- **Nunca** utilize JSON ou outro formato, mesmo que o texto seja extenso.
-Responda exclusivamente no formato de tabela abaixo. Não inclua explicações ou texto fora da tabela.
+- Responda **exclusivamente** em formato JSON: um array de objetos, conforme o exemplo.
+- **Nunca** inclua texto, explicações ou marcações fora do array JSON.
+- Use exatamente estas chaves em cada objeto: "Tipo de Evidência", "Trecho", "Conteúdo", "Resumo", "Referência".
+- Escape corretamente aspas internas; não use quebras de linha dentro dos valores.
 
-| Tipo de Evidência | Trecho                                             | Conteúdo                              | Resumo                         | Referência       | 
-|-------------------|---------------------------------------------------|---------------------------------------|--------------------------------|------------------|
-| Contrato          | "conforme previu contrato na página 4, artigo 1°" | Contrato de Cloud Services com Oracle | Contrato firmado em 22/01/2015 | Pág. 10          |
+Exemplo de resposta:
+[
+  {
+    "Tipo de Evidência": "Contrato",
+    "Trecho": "conforme previu contrato na página 4, artigo 1°",
+    "Conteúdo": "Contrato de Cloud Services com Oracle",
+    "Resumo": "Contrato firmado em 22/01/2015",
+    "Referência": "Pág. 10"
+  }
+]
 
-Cada linha deve representar uma evidência encontrada no bloco. Mesmo que haja apenas uma evidência, a resposta deve manter o formato de tabela.
+Cada objeto deve representar uma evidência encontrada no bloco. Mesmo que haja apenas uma evidência, a resposta deve ser um array JSON. Se nenhuma evidência for encontrada, responda apenas: []
 
 Validação de Evidências:
 Certifique-se de:
@@ -101,20 +118,29 @@ Certifique-se de:
 
 # === SAC v3.0 — RESUMIDOR (AGENTE 1) ===
 MAX_CHARS_RESUMIDOR = 2_400_000  # ~600k tokens — truncar texto muito grande antes de enviar
+MAX_TOKENS_RESUMO = 8192  # v3.2: orçamento de saída do resumidor (antes 2048 truncava)
 
 PROMPT_RESUMIDOR = """
-Você é um assistente jurídico especializado em análise de processos judiciais.
+Você é um assistente jurídico-pericial especializado em análise de processos judiciais.
 
-TAREFA: Analise o processo judicial completo abaixo e retorne EXCLUSIVAMENTE o seguinte resumo estruturado, sem nenhum texto adicional:
+TAREFA: Analise o processo judicial completo abaixo e produza um RESUMO ESTRUTURADO E COMPLETO,
+que servirá de contexto para as próximas etapas de uma auditoria pericial. Seja detalhado nos
+campos de DOCUMENTOS-CHAVE e QUESITOS PERICIAIS. Retorne EXCLUSIVAMENTE o resumo abaixo, sem
+nenhum texto introdutório ou final.
 
-TIPO DE AÇÃO: [ex: Reclamação Trabalhista, Ação de Indenização, Ação Trabalhista, etc.]
+TIPO DE AÇÃO: [ex: Reclamação Trabalhista, Ação de Indenização, Procedimento Comum Cível, etc.]
 PARTES:
   - Polo Ativo: [Nome/Razão Social do reclamante ou autor]
   - Polo Passivo: [Nome/Razão Social do réu ou demandado]
-OBJETO: [2-3 linhas descrevendo o pedido principal ou pretensão]
+OBJETO: [3-5 linhas descrevendo o pedido principal, a pretensão e a controvérsia central]
 PERÍODO RELEVANTE: [datas de início e fim do período discutido no processo]
-TIPOS DE DOCUMENTOS MENCIONADOS: [lista separada por vírgula de tipos de documentos vistos no processo]
-VALORES EM DISPUTA: [valores monetários se identificados, caso contrário: Não identificado]
+VALORES EM DISPUTA: [valores monetários identificados; caso contrário: Não identificado]
+DOCUMENTOS-CHAVE: [liste, um por linha iniciado por "- ", os principais documentos/provas
+  mencionados no processo (notas fiscais, contratos, laudos, comprovantes, ARTs, recibos, etc.),
+  indicando tipo e, quando houver, número/data/página de referência]
+QUESITOS PERICIAIS: [liste, um por linha iniciado por "- ", os quesitos formulados às partes ou
+  ao perito; se não houver quesitos no processo, escreva: Não identificado]
 
-REGRA IMPORTANTE: Se algum campo não puder ser identificado com certeza no texto, escreva: Não identificado.
+REGRA IMPORTANTE: Se algum campo não puder ser identificado com certeza no texto, escreva:
+Não identificado. Não invente informações que não estejam no processo.
 """

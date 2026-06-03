@@ -11,11 +11,10 @@ logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level}</
 
 try:
     import streamlit as st
-    import pandas as pd
-    from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA, CAMINHO_LOGS
+    from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA, DELIMITADOR_PAGINA_PADRAO
     from src.leitor_txt import carregar_blocos, carregar_texto_completo
     from src.controlador import processar_blocos_run
-    from src.planilha import get_caminho_excel
+    from src.planilha import get_caminho_excel, ler_evidencias_df
     from src import persistence
     from src.mailer import enviar_resultado, smtp_configurado
     logger.success("Imports carregados com sucesso.")
@@ -178,6 +177,13 @@ def main():
                 help="Gera um resumo do processo antes da extração para melhorar a classificação das evidências.",
             )
 
+            delimitador_pagina = st.text_input(
+                "Delimitador de página",
+                value=DELIMITADOR_PAGINA_PADRAO,
+                help="Marcador que separa as páginas no TXT OCR. Ex: ---Página---. "
+                     "Se não for encontrado, o documento é dividido por tamanho (caracteres).",
+            )
+
             # Dropdown de retomada
             runs_incompletas = persistence.listar_runs_incompletas()
             opcoes_retomada = ["— Nova execução —"] + [
@@ -223,7 +229,7 @@ def main():
                 st.stop()
 
             with st.spinner("Analisando e dividindo documento em blocos..."):
-                blocos = carregar_blocos(ARQUIVO_PADRAO_TXT)
+                blocos = carregar_blocos(ARQUIVO_PADRAO_TXT, (delimitador_pagina or "").strip())
             total_blocos = len(blocos)
 
             if total_blocos == 0:
@@ -316,7 +322,7 @@ def main():
             # Executar pipeline
             try:
                 # T22: Passar texto_completo e usar_sac
-                total_evidencias = processar_blocos_run(
+                total_evidencias, resumo_processo = processar_blocos_run(
                     run_id=run_id,
                     blocos=blocos,
                     arquivo_origem=arquivo_origem,
@@ -328,6 +334,7 @@ def main():
                 persistence.finalizar_run(run_id, persistence.RUN_COMPLETED)
                 st.session_state["processamento_concluido"] = True
                 st.session_state["total_evidencias"] = total_evidencias
+                st.session_state["resumo_processo"] = resumo_processo
 
             except Exception as exc:
                 persistence.finalizar_run(run_id, persistence.RUN_INCOMPLETA, str(exc))
@@ -350,10 +357,13 @@ def main():
             )
 
             # T26: Warning se SAC foi requisitado mas não funcionou
-            if usar_sac:
-                resumo_path = os.path.join(CAMINHO_LOGS, "resumo_processo.txt")
-                if not os.path.exists(resumo_path) or os.path.getsize(resumo_path) == 0:
-                    st.warning("⚠️ Contexto global (SAC) não foi gerado — extração continuou sem SAC.")
+            if usar_sac and not resumo_processo:
+                st.warning("⚠️ Contexto global (SAC) não foi gerado — extração continuou sem SAC.")
+
+            # Resumo do processo (SAC) — visível na aba Processar
+            if resumo_processo:
+                with st.expander("📄 Resumo do processo (contexto SAC)", expanded=True):
+                    st.text(resumo_processo)
 
             # Envio de email
             xlsx_path = get_caminho_excel(run_id)
@@ -371,11 +381,15 @@ def main():
                         resumo=resumo,
                     )
                 if ok:
+                    st.session_state["email_status"] = ("ok", email_destino.strip())
                     st.success(f"📧 Resultado enviado para {email_destino}")
                 else:
+                    st.session_state["email_status"] = ("falha", email_destino.strip())
                     st.warning("📧 Falha ao enviar email — verifique as configurações SMTP no .env.")
-            elif not smtp_configurado():
-                st.info("💡 Configure SMTP_* no .env para receber resultados por email.")
+            else:
+                st.session_state["email_status"] = ("nao_solicitado", "")
+                if not smtp_configurado():
+                    st.info("💡 Configure SMTP_* no .env para receber resultados por email.")
 
     # -----------------------------------------------------------------------
     # TAB 2 — RESULTADOS
@@ -388,9 +402,25 @@ def main():
         if not run_id_atual:
             st.info("Nenhuma execução nesta sessão. Processe um documento na aba **Processar**.")
         else:
+            # Resumo do processo (SAC) — persistente, sobrevive à troca de abas
+            run_atual = persistence.get_run(run_id_atual)
+            resumo_persistido = (run_atual or {}).get("resumo_processo") or st.session_state.get("resumo_processo")
+            if resumo_persistido:
+                with st.expander("📄 Resumo do processo (contexto SAC)", expanded=False):
+                    st.text(resumo_persistido)
+
+            # Status do envio de email (persistente)
+            email_status = st.session_state.get("email_status")
+            if email_status:
+                tipo, alvo = email_status
+                if tipo == "ok":
+                    st.success(f"📧 Resultado enviado por email para {alvo}")
+                elif tipo == "falha":
+                    st.warning(f"📧 Falha ao enviar email para {alvo} — verifique SMTP no .env (ou use scripts/testar_smtp.py).")
+
             xlsx_path = get_caminho_excel(run_id_atual)
             if os.path.exists(xlsx_path):
-                df = pd.read_excel(xlsx_path)
+                df = ler_evidencias_df(xlsx_path)
                 if not df.empty:
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Total de Evidências", len(df))

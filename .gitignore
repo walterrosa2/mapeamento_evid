@@ -10,6 +10,8 @@ build/
 venv/
 env/
 ENV/
+.pytest_cache/
+.ruff_cache/
 
 # Ambiente
 .env

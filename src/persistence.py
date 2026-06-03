@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS runs (
     blocos_processados  INTEGER DEFAULT 0,
     total_evidencias    INTEGER DEFAULT 0,
     email_destino       TEXT,
-    erro_msg            TEXT
+    erro_msg            TEXT,
+    resumo_processo     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run_items (
@@ -69,11 +70,20 @@ def _conn():
         con.close()
 
 
+def _migrar_schema(con) -> None:
+    """Migrações idempotentes para bancos já existentes (ADD COLUMN faltantes)."""
+    colunas = {row["name"] for row in con.execute("PRAGMA table_info(runs)").fetchall()}
+    if "resumo_processo" not in colunas:
+        con.execute("ALTER TABLE runs ADD COLUMN resumo_processo TEXT")
+        logger.info("Migração: coluna 'resumo_processo' adicionada à tabela runs.")
+
+
 def init_db() -> None:
     """Cria banco e tabelas se não existirem (idempotente)."""
     try:
         with _conn() as con:
             con.executescript(_DDL)
+            _migrar_schema(con)
         logger.debug(f"Banco inicializado: {CAMINHO_DB}")
     except Exception as exc:
         logger.error(f"Falha ao inicializar banco: {exc}")
@@ -118,6 +128,15 @@ def finalizar_run(run_id: str, status: str, erro_msg: str = None) -> None:
             (status, _now_iso(), erro_msg, run_id),
         )
     logger.info(f"Run finalizada: {run_id} → {status}")
+
+
+def salvar_resumo_run(run_id: str, resumo: str) -> None:
+    """Persiste o resumo do processo (SAC) gerado pelo Agente 1."""
+    with _conn() as con:
+        con.execute(
+            "UPDATE runs SET resumo_processo=? WHERE run_id=?",
+            (resumo, run_id),
+        )
 
 
 def get_run(run_id: str) -> dict | None:
