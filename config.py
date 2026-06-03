@@ -24,6 +24,9 @@ else:
 # === TAMANHO DO BLOCO EM CARACTERES (ajuste se necessário) ===
 TAMANHO_BLOCO = 30000  # ~7.5k tokens de documento — deixa margem suficiente para resposta
 
+# === PAGE-AWARE CHUNKING v3.0 ===
+PAGINAS_POR_BLOCO = 10  # Agrupar N páginas por bloco; ajuste para adaptar tamanho
+
 # === CAMINHOS PADRÃO USANDO BASE ABSOLUTA ===
 CAMINHO_ENTRADA = os.path.join(BASE_DIR, "entrada")
 CAMINHO_SAIDA = os.path.join(BASE_DIR, "saida")
@@ -94,4 +97,24 @@ Certifique-se de:
 - Ignore narrativas jurídicas, exposições de fatos, fundamentos legais, citações de jurisprudência e pedidos. Analise SOMENTE trechos que tenham natureza documental (comprovantes, notas, tabelas, quadros, extratos, recibos, contratos, notificações, OS, relatórios, anexos etc.)
 - Só classifique como evidência aquilo que seja um documento, anexo, prova objetiva ou elemento mensurável. Nunca classifique trechos descritivos, justificativas, reclamações ou explicações como evidência.
 
+"""
+
+# === SAC v3.0 — RESUMIDOR (AGENTE 1) ===
+MAX_CHARS_RESUMIDOR = 2_400_000  # ~600k tokens — truncar texto muito grande antes de enviar
+
+PROMPT_RESUMIDOR = """
+Você é um assistente jurídico especializado em análise de processos judiciais.
+
+TAREFA: Analise o processo judicial completo abaixo e retorne EXCLUSIVAMENTE o seguinte resumo estruturado, sem nenhum texto adicional:
+
+TIPO DE AÇÃO: [ex: Reclamação Trabalhista, Ação de Indenização, Ação Trabalhista, etc.]
+PARTES:
+  - Polo Ativo: [Nome/Razão Social do reclamante ou autor]
+  - Polo Passivo: [Nome/Razão Social do réu ou demandado]
+OBJETO: [2-3 linhas descrevendo o pedido principal ou pretensão]
+PERÍODO RELEVANTE: [datas de início e fim do período discutido no processo]
+TIPOS DE DOCUMENTOS MENCIONADOS: [lista separada por vírgula de tipos de documentos vistos no processo]
+VALORES EM DISPUTA: [valores monetários se identificados, caso contrário: Não identificado]
+
+REGRA IMPORTANTE: Se algum campo não puder ser identificado com certeza no texto, escreva: Não identificado.
 """

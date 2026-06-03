@@ -9,13 +9,13 @@ except ImportError:
     import google.genai as genai
 
 from google.genai import types
-from config import GOOGLE_API_KEY, PROMPT_PADRAO, CAMINHO_LOGS
+from config import GOOGLE_API_KEY, PROMPT_PADRAO, PROMPT_RESUMIDOR, CAMINHO_LOGS, MAX_CHARS_RESUMIDOR
 
 # Inicializar cliente Gemini
 client = genai.Client(api_key=GOOGLE_API_KEY)
 MODEL_ID = "gemini-2.5-flash"
 
-def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
+def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0, contexto_global: str = "") -> str:
     """
     Envia um único bloco de texto para a API Gemini com Retentativa Exponencial.
     """
@@ -24,10 +24,16 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
 
     for attempt in range(max_retries):
         try:
-            prompt_final = PROMPT_PADRAO + "\n\n" + texto_bloco
+            prompt_final = PROMPT_PADRAO
+            if contexto_global:
+                prompt_final += "\n\n[CONTEXTO DO PROCESSO]\n" + contexto_global + "\n[FIM DO CONTEXTO]\n\n"
+            prompt_final += texto_bloco
             salvar_bloco_enviado(bloco_id, prompt_final)
 
-            logger.info(f"🚀 Enviando bloco {bloco_id} (Tentativa {attempt + 1}/{max_retries} - Modelo: {MODEL_ID})...")
+            if contexto_global:
+                logger.info(f"🚀 Enviando bloco {bloco_id} com contexto global ({len(contexto_global)} chars) (Tentativa {attempt + 1}/{max_retries} - Modelo: {MODEL_ID})...")
+            else:
+                logger.info(f"🚀 Enviando bloco {bloco_id} (Tentativa {attempt + 1}/{max_retries} - Modelo: {MODEL_ID})...")
             
             response = client.models.generate_content(
                 model=MODEL_ID,
@@ -88,3 +94,65 @@ def salvar_bloco_enviado(bloco_id: int, texto_bloco: str):
     caminho = os.path.join(CAMINHO_LOGS, f"bloco_enviado_{bloco_id:03}.txt")
     with open(caminho, "w", encoding="utf-8") as f:
         f.write(texto_bloco)
+
+def gerar_resumo_processo(texto_completo: str) -> str:
+    """T14: Agente 1 — gera resumo estruturado do processo completo."""
+    if not texto_completo:
+        return ""
+
+    # Truncagem se necessário
+    if len(texto_completo) > MAX_CHARS_RESUMIDOR:
+        logger.warning(f"⚠️ Texto do processo muito grande ({len(texto_completo):,} chars) — truncando para {MAX_CHARS_RESUMIDOR:,}")
+        texto_completo = texto_completo[:MAX_CHARS_RESUMIDOR]
+
+    max_retries = 3
+    retry_delay = 3
+
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"🔍 Gerando resumo do processo (Tentativa {attempt + 1}/{max_retries})...")
+            inicio = time.time()
+
+            response = client.models.generate_content(
+                model=MODEL_ID,
+                contents=PROMPT_RESUMIDOR + "\n\n" + texto_completo,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=2048,
+                ),
+            )
+
+            duracao = time.time() - inicio
+
+            if not response.text:
+                logger.warning(f"⚠️ Resumo vazio")
+                return ""
+
+            resumo = response.text.strip()
+
+            # Salvar em auditoria
+            os.makedirs(CAMINHO_LOGS, exist_ok=True)
+            with open(os.path.join(CAMINHO_LOGS, "resumo_processo.txt"), "w", encoding="utf-8") as f:
+                f.write(resumo)
+
+            logger.success(f"✅ Resumo gerado em {duracao:.1f}s ({len(resumo)} chars)")
+            return resumo
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_retryable = (
+                "429" in error_msg or "exhausted" in error_msg or "too many requests" in error_msg
+                or "503" in error_msg or "unavailable" in error_msg or "high demand" in error_msg
+            )
+            if is_retryable:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.warning(f"⏳ API indisponível. Aguardando {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(f"❌ Falha ao gerar resumo após {max_retries} tentativas — SAC desativado")
+            else:
+                logger.error(f"❌ Erro ao gerar resumo: {e} — SAC desativado")
+            break
+
+    return ""

@@ -2,8 +2,8 @@ import re
 import json
 from typing import Callable, Optional
 from loguru import logger
-from src.leitor_txt import carregar_blocos
-from src.gemini_api import enviar_bloco_para_gemini
+from src.leitor_txt import carregar_blocos, carregar_texto_completo
+from src.gemini_api import enviar_bloco_para_gemini, gerar_resumo_processo
 from src.planilha import inicializar_planilha, adicionar_linhas_excel
 from src import persistence
 from config import ARQUIVO_PADRAO_TXT
@@ -105,12 +105,18 @@ def processar_blocos_run(
     arquivo_origem: str = "",
     skip_ids: Optional[set] = None,
     progress_cb: Optional[Callable] = None,
+    texto_completo: str = "",
+    usar_sac: bool = False,
 ) -> int:
     """
-    Processa blocos para uma run específica.
+    Processa blocos para uma run específica (v3.0 com SAC opcional).
+
+    Fase 1 (se usar_sac=True): Gera resumo do processo completo.
+    Fase 2: Extrai evidências bloco a bloco com contexto global (se disponível).
 
     progress_cb(bloco_id, total, evidencias_acumuladas, status_bloco)
-      status_bloco: 'ok' | 'vazio' | 'erro'
+      status_bloco: 'ok' | 'vazio' | 'erro' | 'resumindo'
+      bloco_id=-1 sinaliza Fase 1 (resumindo)
 
     Retorna total de evidências extraídas.
     """
@@ -118,8 +124,17 @@ def processar_blocos_run(
     total_blocos = len(blocos)
     evidencias_acumuladas = 0
     blocos_processados = 0
+    contexto_global = ""
 
     inicializar_planilha(run_id)
+
+    # Fase 1: SAC — Gerar resumo do processo
+    if usar_sac and texto_completo:
+        if progress_cb:
+            progress_cb(-1, total_blocos, 0, "resumindo")
+        contexto_global = gerar_resumo_processo(texto_completo)
+        if not contexto_global:
+            logger.warning("⚠️ SAC desativado — falha ao gerar resumo")
 
     for i, bloco in enumerate(blocos):
         if i in skip_ids:
@@ -129,7 +144,7 @@ def processar_blocos_run(
             continue
 
         logger.info(f"Bloco {i+1}/{total_blocos} enviado para Gemini...")
-        resposta = enviar_bloco_para_gemini(bloco, bloco_id=i)
+        resposta = enviar_bloco_para_gemini(bloco, bloco_id=i, contexto_global=contexto_global)
 
         if not resposta:
             logger.error(f"Sem retorno da Gemini no bloco {i}.")

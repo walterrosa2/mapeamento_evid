@@ -13,7 +13,7 @@ try:
     import streamlit as st
     import pandas as pd
     from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA
-    from src.leitor_txt import carregar_blocos
+    from src.leitor_txt import carregar_blocos, carregar_texto_completo
     from src.controlador import processar_blocos_run
     from src.planilha import get_caminho_excel
     from src import persistence
@@ -172,6 +172,12 @@ def main():
                 help="Arquivo de texto extraído via OCR do processo judicial",
             )
 
+            usar_sac = st.checkbox(
+                "🧠 Usar contexto global (SAC)",
+                value=False,
+                help="Gera um resumo do processo antes da extração para melhorar a classificação das evidências.",
+            )
+
             # Dropdown de retomada
             runs_incompletas = persistence.listar_runs_incompletas()
             opcoes_retomada = ["— Nova execução —"] + [
@@ -204,8 +210,12 @@ def main():
                 with st.spinner("Salvando arquivo..."):
                     processar_arquivo_upload(uploaded_file)
                 arquivo_origem = uploaded_file.name
+                # T21: Carregar texto completo para SAC
+                texto_completo = carregar_texto_completo(ARQUIVO_PADRAO_TXT)
+                st.session_state["texto_completo"] = texto_completo
             else:
                 arquivo_origem = retomar_run.get("arquivo_origem", "")
+                st.session_state["texto_completo"] = ""
 
             arquivo_txt = os.path.join(CAMINHO_ENTRADA, ARQUIVO_PADRAO_TXT)
             if not os.path.exists(arquivo_txt):
@@ -255,7 +265,16 @@ def main():
             blocos_processados_count = [0]
             erros_count = [0]
 
+            # T23–T26: Callback com suporte para 2 fases (SAC)
+            fase1_complete = [False]
+
             def progress_cb(bloco_id: int, total: int, evidencias_acum: int, status_bloco: str):
+                # T23: Tratar bloco_id == -1 como sinal de Fase 1 (resumindo)
+                if bloco_id == -1:
+                    st.markdown("### 🔍 Fase 1/2: Gerando contexto do processo...")
+                    fase1_complete[0] = True
+                    return
+
                 if status_bloco == "pulado":
                     return
                 blocos_processados_count[0] += 1
@@ -266,15 +285,25 @@ def main():
                 pct = min(processados / max(total - len(skip_ids), 1), 1.0)
                 progress_bar.progress(pct)
 
+                # T25: ETA apenas para blocos reais (bloco_id >= 0)
                 elapsed = time.monotonic() - t0
                 pendentes = max(total - len(skip_ids) - processados, 0)
                 eta = (elapsed / processados) * pendentes if processados > 0 else 0
 
-                status_text.markdown(
-                    f"**Bloco {bloco_id + 1} de {total}** &nbsp;|&nbsp; "
-                    f"**{evidencias_acum}** evidência(s) &nbsp;|&nbsp; "
-                    f"ETA: {_fmt_eta(eta)}"
-                )
+                # T24: Status para Fase 2
+                if fase1_complete[0]:
+                    status_text.markdown(
+                        f"### 📊 Fase 2/2: Extraindo evidências<br>"
+                        f"**Bloco {bloco_id + 1} de {total}** &nbsp;|&nbsp; "
+                        f"**{evidencias_acum}** evidência(s) &nbsp;|&nbsp; "
+                        f"ETA: {_fmt_eta(eta)}"
+                    )
+                else:
+                    status_text.markdown(
+                        f"**Bloco {bloco_id + 1} de {total}** &nbsp;|&nbsp; "
+                        f"**{evidencias_acum}** evidência(s) &nbsp;|&nbsp; "
+                        f"ETA: {_fmt_eta(eta)}"
+                    )
 
                 icone = _status_label(status_bloco)
                 with container_blocos:
@@ -286,12 +315,15 @@ def main():
 
             # Executar pipeline
             try:
+                # T22: Passar texto_completo e usar_sac
                 total_evidencias = processar_blocos_run(
                     run_id=run_id,
                     blocos=blocos,
                     arquivo_origem=arquivo_origem,
                     skip_ids=skip_ids,
                     progress_cb=progress_cb,
+                    texto_completo=st.session_state.get("texto_completo", ""),
+                    usar_sac=usar_sac,
                 )
                 persistence.finalizar_run(run_id, persistence.RUN_COMPLETED)
                 st.session_state["processamento_concluido"] = True
@@ -316,6 +348,12 @@ def main():
                 f'Erros: {erros_count[0]} bloco(s)</div>',
                 unsafe_allow_html=True,
             )
+
+            # T26: Warning se SAC foi requisitado mas não funcionou
+            if usar_sac:
+                resumo_path = os.path.join(CAMINHO_LOGS, "resumo_processo.txt")
+                if not os.path.exists(resumo_path) or os.path.getsize(resumo_path) == 0:
+                    st.warning("⚠️ Contexto global (SAC) não foi gerado — extração continuou sem SAC.")
 
             # Envio de email
             xlsx_path = get_caminho_excel(run_id)
