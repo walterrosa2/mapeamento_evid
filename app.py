@@ -12,7 +12,7 @@ logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level}</
 try:
     import streamlit as st
     import pandas as pd
-    from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA
+    from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA, CAMINHO_LOGS
     from src.leitor_txt import carregar_blocos, carregar_texto_completo
     from src.controlador import processar_blocos_run
     from src.planilha import get_caminho_excel
