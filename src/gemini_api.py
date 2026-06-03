@@ -31,11 +31,23 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
             
             response = client.models.generate_content(
                 model=MODEL_ID,
-                contents=prompt_final
+                contents=prompt_final,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=32768,
+                ),
             )
 
+            # Inspecionar finish_reason para diagnóstico de truncamentos silenciosos
+            candidate = response.candidates[0] if response.candidates else None
+            finish_reason = candidate.finish_reason if candidate else "UNKNOWN"
+            if str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
+                logger.warning(
+                    f"⚠️ Bloco {bloco_id} encerrado com finish_reason={finish_reason}. "
+                    f"Resposta pode estar incompleta ou bloqueada."
+                )
+
             if not response.text:
-                logger.warning(f"⚠️ Resposta vazia no bloco {bloco_id}")
+                logger.warning(f"⚠️ Resposta vazia no bloco {bloco_id} (finish_reason={finish_reason})")
                 return ""
 
             resposta_texto = response.text.strip()
@@ -45,10 +57,16 @@ def enviar_bloco_para_gemini(texto_bloco: str, bloco_id: int = 0) -> str:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "429" in error_msg or "exhausted" in error_msg or "too many requests" in error_msg:
+            # 429 = cota esgotada | 503 = servidor sobrecarregado — ambos são retriáveis
+            is_retryable = (
+                "429" in error_msg or "exhausted" in error_msg or "too many requests" in error_msg
+                or "503" in error_msg or "unavailable" in error_msg or "high demand" in error_msg
+            )
+            if is_retryable:
                 if attempt < max_retries - 1:
                     wait_time = retry_delay * (2 ** attempt)
-                    logger.warning(f"⏳ Cota atingida (429). Aguardando {wait_time}s antes de tentar novamente...")
+                    codigo = "429" if "429" in error_msg else "503"
+                    logger.warning(f"⏳ API temporariamente indisponível ({codigo}). Aguardando {wait_time}s...")
                     time.sleep(wait_time)
                     continue
                 else:

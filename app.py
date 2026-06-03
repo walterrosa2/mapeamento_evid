@@ -1,299 +1,434 @@
-"""
-Mapeamento Pericial - Interface Streamlit
-Aplicação para extração automatizada de evidências jurídicas
-"""
-
-import streamlit as st
 import os
+import time
 import sys
-import pandas as pd
-from pathlib import Path
-import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from loguru import logger
 
-# === DEBUG: RASTREAMENTO DE INICIALIZAÇÃO ===
-print("--- [DEBUG] INICIANDO APP.PY ---", flush=True)
-
-# Configurar logger
 logger.remove()
-logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}", level="INFO")
 
-# Importar módulos da aplicação com tratamento de erro
 try:
-    print("--- [DEBUG] IMPORTANDO CONTROLADOR ---", flush=True)
-    from src.controlador import processar_todos_os_blocos
-    from src.controlador import extrair_campos, limpar_linha_vazia
-    
-    print("--- [DEBUG] IMPORTANDO LEITOR_TXT ---", flush=True)
+    import streamlit as st
+    import pandas as pd
+    from config import ARQUIVO_PADRAO_TXT, CAMINHO_ENTRADA, CAMINHO_SAIDA
     from src.leitor_txt import carregar_blocos
-    
-    print("--- [DEBUG] IMPORTANDO GEMINI_API ---", flush=True)
-    from src.gemini_api import enviar_bloco_para_gemini
-    
-    print("--- [DEBUG] IMPORTANDO PLANILHA ---", flush=True)
-    from src.planilha import inicializar_planilha, adicionar_linha_excel
-    
-    print("--- [DEBUG] IMPORTANDO CONFIG ---", flush=True)
-    from config import CAMINHO_ENTRADA, CAMINHO_SAIDA, ARQUIVO_PADRAO_TXT
-    
-    print("--- [DEBUG] IMPORTS CONCLUIDOS COM SUCESSO ---", flush=True)
+    from src.controlador import processar_blocos_run
+    from src.planilha import get_caminho_excel
+    from src import persistence
+    from src.mailer import enviar_resultado, smtp_configurado
+    logger.success("Imports carregados com sucesso.")
 except Exception as e:
-    print(f"--- [CRITICAL ERROR] FALHA NA IMPORTAÇÃO: {e} ---", flush=True)
-    logger.exception("Falha crítica na importação de módulos")
-    sys.exit(1)
+    logger.error(f"Erro de import: {e}")
+    raise
 
-# Configuração da página
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Mapeamento Pericial",
+    page_title="Mapeamento Pericial v2",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# CSS customizado
+# ---------------------------------------------------------------------------
+# CSS
+# ---------------------------------------------------------------------------
 st.markdown("""
-    <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1E3A8A;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #64748B;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .stProgress > div > div > div > div {
-        background-color: #1E3A8A;
-    }
-    .success-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #D1FAE5;
-        border-left: 4px solid #10B981;
-        margin: 1rem 0;
-    }
-    .info-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #DBEAFE;
-        border-left: 4px solid #3B82F6;
-        margin: 1rem 0;
-    }
-    </style>
+<style>
+.main-header {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1E3A8A;
+    margin-bottom: 0.2rem;
+}
+.sub-header {
+    font-size: 1rem;
+    color: #6B7280;
+    margin-bottom: 1.5rem;
+}
+.stProgress > div > div > div { background-color: #1E3A8A !important; }
+.success-box {
+    background: #ECFDF5;
+    border-left: 4px solid #10B981;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin: 8px 0;
+}
+.info-box {
+    background: #EFF6FF;
+    border-left: 4px solid #3B82F6;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin: 8px 0;
+}
+.warn-box {
+    background: #FFFBEB;
+    border-left: 4px solid #F59E0B;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin: 8px 0;
+}
+.bloco-linha { padding: 4px 0; font-size: 0.875rem; border-bottom: 1px solid #F3F4F6; }
+</style>
 """, unsafe_allow_html=True)
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def garantir_diretorios():
-    """Garante que os diretórios necessários existam"""
-    for dir_path in [CAMINHO_ENTRADA, CAMINHO_SAIDA, os.path.join(os.path.dirname(__file__), "logs")]:
-        os.makedirs(dir_path, exist_ok=True)
+    for p in [CAMINHO_ENTRADA, CAMINHO_SAIDA]:
+        os.makedirs(p, exist_ok=True)
+
 
 def processar_arquivo_upload(uploaded_file):
-    """Processa o arquivo enviado pelo usuário"""
-    # Garantir que diretórios existam
-    garantir_diretorios()
-    
-    # Salvar arquivo temporariamente
     arquivo_path = os.path.join(CAMINHO_ENTRADA, ARQUIVO_PADRAO_TXT)
     with open(arquivo_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    
     return arquivo_path
 
+
+def _fmt_eta(segundos: float) -> str:
+    if segundos <= 0:
+        return "calculando..."
+    if segundos < 60:
+        return f"~{int(segundos)}s"
+    mins = int(segundos // 60)
+    segs = int(segundos % 60)
+    return f"~{mins}min {segs:02d}s"
+
+
+def _status_label(status: str) -> str:
+    icons = {"ok": "✅", "vazio": "⚠️", "erro": "❌", "pulado": "⏭️"}
+    return icons.get(status, "⏳")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
+    garantir_diretorios()
+    persistence.init_db()
+
     # Header
-    st.markdown('<div class="main-header">⚖️ Mapeamento Pericial</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Extração Automatizada de Evidências Jurídicas</div>', unsafe_allow_html=True)
-    
-    # Sidebar com informações
+    st.markdown('<p class="main-header">⚖️ Mapeamento Pericial</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Extração de evidências periciais via IA — v2.0</p>', unsafe_allow_html=True)
+
+    # Sidebar
     with st.sidebar:
-        st.header("ℹ️ Sobre")
+        st.markdown("### ℹ️ Sobre")
         st.markdown("""
-        Esta aplicação utiliza IA para extrair e mapear evidências de processos jurídicos.
-        
-        **Como usar:**
-        1. Faça upload do arquivo TXT (extraído via OCR)
-        2. Clique em "Processar Documento"
-        3. Aguarde o processamento
-        4. Baixe a planilha com as evidências
-        
-        **Tipos de Evidências:**
+        Analisa documentos OCR e extrai evidências periciais usando Google Gemini.
+
+        **Tipos de evidências:**
         - Notas Fiscais
         - Contratos
         - Pagamentos
         - Multas Contratuais
         - Apontamentos (OSs)
         - Base de Cálculo
-        - Oscilações de Despesas
+        - Oscilações de Gastos
         - Perdas Diretas/Indiretas
-        - Reembolsos e Despesas
+        - Reembolso/Viagens
         """)
-        
-        st.divider()
-        st.caption("🤖 Powered by Google Gemini AI")
-    
-    # Área principal
-    tab1, tab2 = st.tabs(["📤 Upload e Processamento", "📊 Resultados"])
-    
-    with tab1:
-        st.markdown('<div class="info-box">📥 <b>Passo 1:</b> Faça upload do arquivo TXT contendo o processo extraído via OCR</div>', unsafe_allow_html=True)
-        
-        uploaded_file = st.file_uploader(
-            "Selecione o arquivo TXT do processo",
-            type=['txt'],
-            help="Arquivo de texto extraído via OCR contendo o processo jurídico"
-        )
-        
-        if uploaded_file is not None:
-            # Mostrar informações do arquivo
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📄 Nome do Arquivo", uploaded_file.name)
-            with col2:
-                file_size_kb = uploaded_file.size / 1024
-                st.metric("📊 Tamanho", f"{file_size_kb:.2f} KB")
-            with col3:
-                st.metric("✅ Status", "Pronto")
-            
-            st.divider()
-            
-            # Botão de processamento
-            if st.button("🚀 Processar Documento", type="primary", use_container_width=True):
-                try:
-                    # Salvar arquivo
-                    with st.spinner("Salvando arquivo..."):
-                        arquivo_path = processar_arquivo_upload(uploaded_file)
-                        st.success(f"✅ Arquivo salvo: {uploaded_file.name}")
-                    
-                    # Carregar blocos
-                    with st.spinner("Analisando documento e dividindo em blocos..."):
-                        blocos = carregar_blocos(ARQUIVO_PADRAO_TXT)
-                        total_blocos = len(blocos)
-                        st.info(f"📚 Documento dividido em {total_blocos} blocos para processamento")
-                    
-                    # Inicializar planilha
-                    inicializar_planilha()
-                    
-                    # Processar blocos
-                    st.markdown("### 🔄 Processamento em Andamento")
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    log_container = st.container()
-                    
-                    total_evidencias = 0
-                    
-                    for i, bloco in enumerate(blocos):
-                        # Atualizar progresso
-                        progresso = (i + 1) / total_blocos
-                        progress_bar.progress(progresso)
-                        status_text.text(f"Processando bloco {i+1} de {total_blocos}...")
-                        
-                        with log_container:
-                            with st.expander(f"📝 Bloco {i+1}/{total_blocos}", expanded=(i == len(blocos)-1)):
-                                st.text(f"🔍 Enviando para análise de IA...")
-                                
-                                # Enviar para Gemini
-                                resposta = enviar_bloco_para_gemini(bloco, bloco_id=i)
-                                
-                                if not resposta:
-                                    st.error("❌ Erro: nenhum retorno recebido da IA")
-                                    continue
-                                
-                                st.text(f"✅ Resposta recebida")
-                                
-                                # Extrair evidências
-                                evidencias = extrair_campos(resposta)
-                                
-                                if not evidencias:
-                                    st.warning("⚠️ Nenhuma evidência encontrada neste bloco")
-                                    continue
-                                
-                                # Salvar evidências
-                                linhas_validas = 0
-                                for evidencia in evidencias:
-                                    evidencia_limpa = limpar_linha_vazia(evidencia)
-                                    if evidencia_limpa:
-                                        adicionar_linha_excel(evidencia_limpa)
-                                        linhas_validas += 1
-                                        total_evidencias += 1
-                                
-                                st.success(f"✅ {linhas_validas} evidência(s) extraída(s)")
-                    
-                    # Finalização
-                    progress_bar.progress(1.0)
-                    status_text.empty()
-                    
-                    st.markdown(f'<div class="success-box">🎉 <b>Processamento Concluído!</b><br>Total de evidências extraídas: {total_evidencias}</div>', unsafe_allow_html=True)
-                    
-                    # Armazenar flag de sucesso
-                    st.session_state['processamento_concluido'] = True
-                    st.session_state['total_evidencias'] = total_evidencias
-                    
-                except Exception as e:
-                    st.error(f"❌ Erro durante o processamento: {str(e)}")
-                    logger.error(f"Erro no processamento: {e}")
-    
-    with tab2:
-        st.markdown("### 📊 Resultados da Análise")
-        
-        # Verificar se existe arquivo de saída
-        arquivo_excel = os.path.join(CAMINHO_SAIDA, "evidencias_extraidas.xlsx")
-        
-        if os.path.exists(arquivo_excel):
-            try:
-                # Ler planilha
-                df = pd.read_excel(arquivo_excel)
-                
-                if not df.empty:
-                    # Métricas
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("📋 Total de Evidências", len(df))
-                    with col2:
-                        tipos_unicos = df['Tipo de Evidência'].nunique() if 'Tipo de Evidência' in df.columns else 0
-                        st.metric("🏷️ Tipos Diferentes", tipos_unicos)
-                    with col3:
-                        st.metric("📄 Status", "Disponível")
-                    
-                    st.divider()
-                    
-                    # Exibir tabela
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=400
-                    )
-                    
-                    # Botão de download
-                    with open(arquivo_excel, "rb") as file:
-                        st.download_button(
-                            label="📥 Baixar Planilha Excel",
-                            data=file,
-                            file_name="evidencias_extraidas.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                            use_container_width=True
-                        )
-                    
-                    # Distribuição por tipo
-                    if 'Tipo de Evidência' in df.columns:
-                        st.divider()
-                        st.markdown("### 📈 Distribuição por Tipo de Evidência")
-                        tipo_counts = df['Tipo de Evidência'].value_counts()
-                        st.bar_chart(tipo_counts)
-                else:
-                    st.info("ℹ️ A planilha existe mas está vazia. Processe um documento primeiro.")
-            
-            except Exception as e:
-                st.error(f"❌ Erro ao ler a planilha: {str(e)}")
+        if smtp_configurado():
+            st.success("📧 Email configurado")
         else:
-            st.info("ℹ️ Nenhum resultado disponível ainda. Faça upload e processe um documento primeiro.")
+            st.info("📧 Email não configurado\n(.env SMTP_*)")
 
-if __name__ == "__main__":
-    # Garantir diretórios no início
-    garantir_diretorios()
-    main()
+    # Tabs
+    tab_processar, tab_resultados, tab_historico = st.tabs([
+        "📤 Processar", "📊 Resultados", "📋 Histórico"
+    ])
+
+    # -----------------------------------------------------------------------
+    # TAB 1 — PROCESSAR
+    # -----------------------------------------------------------------------
+    with tab_processar:
+        st.markdown("#### Nova execução")
+
+        with st.form("form_processar"):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                nome_run = st.text_input(
+                    "Nome da execução *",
+                    placeholder="Ex: Processo 1234/2025 — Fase 1",
+                    help="Identificador amigável para esta análise",
+                )
+            with col2:
+                email_destino = st.text_input(
+                    "Email para notificação (opcional)",
+                    placeholder="perito@exemplo.com",
+                )
+
+            uploaded_file = st.file_uploader(
+                "Arquivo TXT (OCR do processo)",
+                type=["txt"],
+                help="Arquivo de texto extraído via OCR do processo judicial",
+            )
+
+            # Dropdown de retomada
+            runs_incompletas = persistence.listar_runs_incompletas()
+            opcoes_retomada = ["— Nova execução —"] + [
+                f"{r['nome']} ({r['status']} — {r['started_at'][:10]})"
+                for r in runs_incompletas
+            ]
+            idx_retomada = st.selectbox(
+                "Retomar execução incompleta?",
+                range(len(opcoes_retomada)),
+                format_func=lambda i: opcoes_retomada[i],
+                help="Selecione uma execução anterior para continuar do ponto onde parou",
+            )
+
+            submitted = st.form_submit_button("🚀 Iniciar Processamento", use_container_width=True)
+
+        # -------------------------------------------------------------------
+        # Processamento
+        # -------------------------------------------------------------------
+        if submitted:
+            retomar_run = runs_incompletas[idx_retomada - 1] if idx_retomada > 0 else None
+
+            if not retomar_run and not uploaded_file:
+                st.error("Envie um arquivo TXT ou selecione uma execução para retomar.")
+                st.stop()
+            if not retomar_run and not nome_run.strip():
+                st.error("Informe um nome para a execução.")
+                st.stop()
+
+            if uploaded_file:
+                with st.spinner("Salvando arquivo..."):
+                    processar_arquivo_upload(uploaded_file)
+                arquivo_origem = uploaded_file.name
+            else:
+                arquivo_origem = retomar_run.get("arquivo_origem", "")
+
+            arquivo_txt = os.path.join(CAMINHO_ENTRADA, ARQUIVO_PADRAO_TXT)
+            if not os.path.exists(arquivo_txt):
+                st.error(f"Arquivo TXT não encontrado. Faça o upload novamente.")
+                st.stop()
+
+            with st.spinner("Analisando e dividindo documento em blocos..."):
+                blocos = carregar_blocos(ARQUIVO_PADRAO_TXT)
+            total_blocos = len(blocos)
+
+            if total_blocos == 0:
+                st.error("O documento não gerou nenhum bloco. Verifique o arquivo.")
+                st.stop()
+
+            st.info(f"📚 Documento dividido em **{total_blocos} bloco(s)** para análise.")
+
+            # Criar ou retomar run
+            if retomar_run:
+                run_id = retomar_run["run_id"]
+                skip_ids = persistence.get_processed_block_ids(run_id)
+                blocos_pendentes = total_blocos - len(skip_ids)
+                nome_run = retomar_run["nome"]
+                st.markdown(
+                    f'<div class="info-box">▶️ Retomando <b>{nome_run}</b> — '
+                    f'{len(skip_ids)} bloco(s) já OK, {blocos_pendentes} pendente(s).</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                run_id = persistence.criar_run(
+                    nome=nome_run.strip(),
+                    arquivo_origem=arquivo_origem,
+                    email_destino=email_destino.strip() or None,
+                )
+                skip_ids = set()
+
+            st.session_state["run_id"] = run_id
+            st.session_state["processamento_concluido"] = False
+
+            # Elementos de progresso
+            st.markdown("---")
+            st.markdown(f"**Processando:** {nome_run}")
+            progress_bar = st.progress(0.0)
+            status_text = st.empty()
+            container_blocos = st.container()
+
+            t0 = time.monotonic()
+            blocos_processados_count = [0]
+            erros_count = [0]
+
+            def progress_cb(bloco_id: int, total: int, evidencias_acum: int, status_bloco: str):
+                if status_bloco == "pulado":
+                    return
+                blocos_processados_count[0] += 1
+                if status_bloco == "erro":
+                    erros_count[0] += 1
+
+                processados = blocos_processados_count[0]
+                pct = min(processados / max(total - len(skip_ids), 1), 1.0)
+                progress_bar.progress(pct)
+
+                elapsed = time.monotonic() - t0
+                pendentes = max(total - len(skip_ids) - processados, 0)
+                eta = (elapsed / processados) * pendentes if processados > 0 else 0
+
+                status_text.markdown(
+                    f"**Bloco {bloco_id + 1} de {total}** &nbsp;|&nbsp; "
+                    f"**{evidencias_acum}** evidência(s) &nbsp;|&nbsp; "
+                    f"ETA: {_fmt_eta(eta)}"
+                )
+
+                icone = _status_label(status_bloco)
+                with container_blocos:
+                    st.markdown(
+                        f'<div class="bloco-linha">{icone} Bloco {bloco_id + 1}/{total}'
+                        f'{"" if status_bloco == "ok" else f" — {status_bloco}"}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # Executar pipeline
+            try:
+                total_evidencias = processar_blocos_run(
+                    run_id=run_id,
+                    blocos=blocos,
+                    arquivo_origem=arquivo_origem,
+                    skip_ids=skip_ids,
+                    progress_cb=progress_cb,
+                )
+                persistence.finalizar_run(run_id, persistence.RUN_COMPLETED)
+                st.session_state["processamento_concluido"] = True
+                st.session_state["total_evidencias"] = total_evidencias
+
+            except Exception as exc:
+                persistence.finalizar_run(run_id, persistence.RUN_INCOMPLETA, str(exc))
+                st.error(f"Processamento interrompido: {exc}")
+                logger.exception(f"Erro no processamento da run {run_id}")
+                st.stop()
+
+            # Resultado final
+            progress_bar.progress(1.0)
+            duracao = time.monotonic() - t0
+            mins = int(duracao // 60)
+            segs = int(duracao % 60)
+
+            st.markdown(
+                f'<div class="success-box">🎉 <b>Concluído!</b> &nbsp; '
+                f'{total_evidencias} evidência(s) extraída(s) &nbsp;|&nbsp; '
+                f'Duração: {mins}min {segs:02d}s &nbsp;|&nbsp; '
+                f'Erros: {erros_count[0]} bloco(s)</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Envio de email
+            xlsx_path = get_caminho_excel(run_id)
+            if email_destino.strip():
+                resumo = (
+                    f"Total de evidências extraídas: {total_evidencias}\n"
+                    f"Blocos processados: {total_blocos}\n"
+                    f"Duração: {mins}min {segs:02d}s"
+                )
+                with st.spinner("Enviando email..."):
+                    ok = enviar_resultado(
+                        destino=email_destino.strip(),
+                        run_nome=nome_run,
+                        xlsx_path=xlsx_path,
+                        resumo=resumo,
+                    )
+                if ok:
+                    st.success(f"📧 Resultado enviado para {email_destino}")
+                else:
+                    st.warning("📧 Falha ao enviar email — verifique as configurações SMTP no .env.")
+            elif not smtp_configurado():
+                st.info("💡 Configure SMTP_* no .env para receber resultados por email.")
+
+    # -----------------------------------------------------------------------
+    # TAB 2 — RESULTADOS
+    # -----------------------------------------------------------------------
+    with tab_resultados:
+        st.markdown("#### Resultados da Execução Atual")
+
+        run_id_atual = st.session_state.get("run_id")
+
+        if not run_id_atual:
+            st.info("Nenhuma execução nesta sessão. Processe um documento na aba **Processar**.")
+        else:
+            xlsx_path = get_caminho_excel(run_id_atual)
+            if os.path.exists(xlsx_path):
+                df = pd.read_excel(xlsx_path)
+                if not df.empty:
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Total de Evidências", len(df))
+                    n_tipos = df["Tipo de Evidência"].nunique() if "Tipo de Evidência" in df.columns else 0
+                    col2.metric("Tipos Únicos", n_tipos)
+                    col3.metric("Status", "Concluído ✅")
+
+                    st.dataframe(df, use_container_width=True, height=400)
+
+                    with open(xlsx_path, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Baixar Excel",
+                            data=f,
+                            file_name=f"evidencias_{run_id_atual[:8]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+
+                    if "Tipo de Evidência" in df.columns:
+                        st.markdown("**Distribuição por Tipo de Evidência**")
+                        st.bar_chart(df["Tipo de Evidência"].value_counts())
+                else:
+                    st.warning("Nenhuma evidência extraída nesta execução.")
+            else:
+                st.warning("Arquivo de resultados não encontrado.")
+
+    # -----------------------------------------------------------------------
+    # TAB 3 — HISTÓRICO
+    # -----------------------------------------------------------------------
+    with tab_historico:
+        st.markdown("#### Histórico de Execuções")
+
+        if st.button("🔄 Atualizar lista", key="btn_refresh"):
+            st.rerun()
+
+        runs = persistence.listar_runs()
+
+        if not runs:
+            st.info("Nenhuma execução registrada ainda.")
+        else:
+            for run in runs:
+                status = run["status"]
+                icone = {"COMPLETED": "✅", "RUNNING": "🔄", "INCOMPLETA": "⚠️", "FAILED": "❌"}.get(status, "❓")
+                data = run["started_at"][:16] if run["started_at"] else "—"
+                evidencias = run.get("total_evidencias") or 0
+                blocos_proc = run.get("blocos_processados") or 0
+                total_bl = run.get("total_blocos") or "?"
+
+                with st.expander(f"{icone} {run['nome']}  —  {data}  —  {status}", expanded=False):
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Status", status)
+                    col2.metric("Evidências", evidencias)
+                    col3.metric("Blocos", f"{blocos_proc}/{total_bl}")
+                    col4.metric("Arquivo", run.get("arquivo_origem") or "—")
+
+                    if run.get("erro_msg"):
+                        st.error(f"Erro: {run['erro_msg']}")
+
+                    xlsx_path = get_caminho_excel(run["run_id"])
+                    if status == "COMPLETED" and os.path.exists(xlsx_path):
+                        with open(xlsx_path, "rb") as f:
+                            st.download_button(
+                                label="⬇️ Baixar Excel",
+                                data=f,
+                                file_name=f"evidencias_{run['nome'][:30].replace(' ', '_')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_{run['run_id']}",
+                            )
+
+                    if status in ("INCOMPLETA", "FAILED", "RUNNING"):
+                        st.markdown(
+                            '<div class="warn-box">▶️ Para retomar, vá à aba '
+                            '<b>Processar</b> e selecione no dropdown de retomada.</div>',
+                            unsafe_allow_html=True,
+                        )
+
+
+garantir_diretorios()
+main()

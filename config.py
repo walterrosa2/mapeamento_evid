@@ -22,7 +22,7 @@ else:
     logger.success(f"🔑 API Key carregada com sucesso do .env (Final: ...{GOOGLE_API_KEY[-4:]})")
 
 # === TAMANHO DO BLOCO EM CARACTERES (ajuste se necessário) ===
-TAMANHO_BLOCO = 80000  # Aproximadamente 10k caracteres por bloco
+TAMANHO_BLOCO = 30000  # ~7.5k tokens de documento — deixa margem suficiente para resposta
 
 # === CAMINHOS PADRÃO USANDO BASE ABSOLUTA ===
 CAMINHO_ENTRADA = os.path.join(BASE_DIR, "entrada")
@@ -31,6 +31,17 @@ CAMINHO_LOGS = os.path.join(BASE_DIR, "logs")
 
 # === ARQUIVO DE ENTRADA PADRÃO ===
 ARQUIVO_PADRAO_TXT = "processo.txt"
+
+# === CAMINHOS v2.0 ===
+CAMINHO_RUNS = os.path.join(CAMINHO_SAIDA, "runs")
+CAMINHO_DB   = os.path.join(CAMINHO_SAIDA, "runs.db")
+
+# === SMTP (email best-effort) ===
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_TLS  = os.getenv("SMTP_TLS", "true").lower() == "true"
 
 # === PROMPT PADRÃO APLICADO A CADA BLOCO ===
 PROMPT_PADRAO = """
